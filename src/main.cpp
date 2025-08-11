@@ -26,6 +26,11 @@ json decode_bencoded_value(const std::string& encoded_value)
             throw std::runtime_error("Invalid encoded value: " + encoded_value);
         }
     }
+    else if (encoded_value[0] == 'i')
+    {
+        auto res = encoded_value.substr(1);
+        return json(std::atoll(res.c_str()));
+    }
     else
     {
         throw std::runtime_error("Unhandled encoded value: " + encoded_value);

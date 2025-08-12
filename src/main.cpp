@@ -8,7 +8,9 @@
 
 using json = nlohmann::json;
 
-json decode_bencoded_value(const std::string& encoded_value)
+int default_offset;
+
+json decode_bencoded_value(const std::string& encoded_value, int *offset = &default_offset)
 {
     if (std::isdigit(encoded_value[0]))
     {
@@ -19,6 +21,7 @@ json decode_bencoded_value(const std::string& encoded_value)
             std::string number_string = encoded_value.substr(0, colon_index);
             int64_t number = std::atoll(number_string.c_str());
             std::string str = encoded_value.substr(colon_index + 1, number);
+            *offset = colon_index + 1 + number;
             return json(str);
         }
         else
@@ -28,8 +31,29 @@ json decode_bencoded_value(const std::string& encoded_value)
     }
     else if (encoded_value[0] == 'i')
     {
-        auto res = encoded_value.substr(1);
+        *offset = encoded_value.find('e')+1;
+        auto res = encoded_value.substr(1, *offset);
         return json(std::atoll(res.c_str()));
+    }
+    else if (encoded_value[0] == 'l')
+    {
+        auto res = json::array({});
+        int beg = 1;
+        int end = 0;
+        while (beg + 1 < encoded_value.length())
+        {
+            if (encoded_value[beg] == 'e')
+                break;
+            auto str = encoded_value.substr(beg);
+            auto e = decode_bencoded_value(str, &end);
+            if (end == -1)
+                break;
+
+            res.push_back(e);
+            beg += end;
+        }
+        *offset = beg + 1;
+        return res;
     }
     else
     {

@@ -3,6 +3,7 @@
 #include <vector>
 #include <cctype>
 #include <cstdlib>
+#include <fstream>
 
 #include "lib/nlohmann/json.hpp"
 
@@ -20,8 +21,14 @@ json decode_bencoded_value(const std::string& encoded_value, int *offset = &defa
         {
             std::string number_string = encoded_value.substr(0, colon_index);
             int64_t number = std::atoll(number_string.c_str());
-            std::string str = encoded_value.substr(colon_index + 1, number);
             *offset = colon_index + 1 + number;
+            if (encoded_value[colon_index+1] == '=' and encoded_value[colon_index+2] == 'B')
+            {
+                std::vector<uint8_t> data(encoded_value.begin()+colon_index+3, encoded_value.end());
+                json j1 = json::binary(data, number-2);
+                return j1;
+            }
+            std::string str = encoded_value.substr(colon_index + 1, number);
             return json(str);
         }
         else
@@ -118,6 +125,35 @@ int main(int argc, char* argv[])
         json decoded_value = decode_bencoded_value(encoded_value);
         std::cout << decoded_value.dump() << std::endl;
     }
+    else if (command == "info")
+        {
+            if (argc < 3)
+            {
+                std::cerr << "Usage: " << argv[0] << " info <file>" << std::endl;
+                return 1;
+            }
+
+            std::string file_name = argv[2];
+            std::ifstream file = std::ifstream(file_name, std::ios::binary);
+            if (!file)
+            {
+                std::cerr << "Error opening file\n";
+                return 1;
+            }
+
+            file.seekg(0, std::ios::end);
+            size_t file_size = file.tellg();
+            file.seekg(0, std::ios::beg);
+
+            std::string buffer;
+            buffer.resize(file_size);
+            file.read(buffer.data(), file_size);
+            file.close();
+
+            json decoded_value = decode_bencoded_value(buffer);
+            std::cout << "Tracker URL: " << decoded_value["announce"].get<std::string>() << '\n';
+            std::cout << "Length: " << decoded_value["info"]["length"];
+        }
     else
     {
         std::cerr << "unknown command: " << command << std::endl;

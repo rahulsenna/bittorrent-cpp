@@ -6,6 +6,7 @@
 #include <fstream>
 
 #include "lib/nlohmann/json.hpp"
+#include "lib/sha1.hpp"
 
 using json = nlohmann::json;
 
@@ -152,7 +153,10 @@ int main(int argc, char* argv[])
 
             json decoded_value = decode_bencoded_value(buffer);
             std::cout << "Tracker URL: " << decoded_value["announce"].get<std::string>() << '\n';
-            std::cout << "Length: " << decoded_value["info"]["length"];
+            std::cout << "Length: " << decoded_value["info"]["length"] << '\n';
+            int info_idx = buffer.find("4:info") + strlen("4:info");
+            auto info_coded = buffer.substr(info_idx, buffer.size()-info_idx-1);
+            std::cout << "Info Hash: " << sha1(info_coded) << std::endl;
         }
     else
     {

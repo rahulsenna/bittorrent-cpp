@@ -55,6 +55,35 @@ json decode_bencoded_value(const std::string& encoded_value, int *offset = &defa
         *offset = beg + 1;
         return res;
     }
+    else if (encoded_value[0] == 'd')
+    {
+        auto res = json({});
+        int beg = 1;
+        int end = 0;
+        while (beg + 1 < encoded_value.length())
+        {
+            if (encoded_value[beg] == 'e')
+                break;
+            auto key_str = encoded_value.substr(beg);
+            auto key = decode_bencoded_value(key_str, &end);
+            if (end == -1)
+                break;
+
+            beg += end;
+
+            if (encoded_value[beg] == 'e')
+                break;
+            auto val_str = encoded_value.substr(beg);
+            auto value = decode_bencoded_value(val_str, &end);
+            if (end == -1)
+                break;
+
+            beg += end;
+            res[key] = value;
+        }
+        *offset = beg + 1;
+        return res;
+    }
     else
     {
         throw std::runtime_error("Unhandled encoded value: " + encoded_value);

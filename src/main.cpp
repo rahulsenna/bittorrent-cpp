@@ -23,12 +23,6 @@ json decode_bencoded_value(const std::string& encoded_value, int *offset = &defa
             std::string number_string = encoded_value.substr(0, colon_index);
             int64_t number = std::atoll(number_string.c_str());
             *offset = colon_index + 1 + number;
-            if (encoded_value[colon_index+1] == '=' and encoded_value[colon_index+2] == 'B')
-            {
-                std::vector<uint8_t> data(encoded_value.begin()+colon_index+3, encoded_value.end());
-                json j1 = json::binary(data, number-2);
-                return j1;
-            }
             std::string str = encoded_value.substr(colon_index + 1, number);
             return json(str);
         }
@@ -157,6 +151,14 @@ int main(int argc, char* argv[])
             int info_idx = buffer.find("4:info") + strlen("4:info");
             auto info_coded = buffer.substr(info_idx, buffer.size()-info_idx-1);
             std::cout << "Info Hash: " << sha1(info_coded) << std::endl;
+            std::cout << "Piece Length: " << decoded_value["info"]["piece length"] << std::endl;
+
+            std::string pieces_str = decoded_value["info"]["pieces"].get<std::string>();
+            std::cout << "Piece Hashes: ";
+            for (uint8_t byte : pieces_str)
+                printf("%02x", byte);
+            std::cout << '\n';
+            
         }
     else
     {

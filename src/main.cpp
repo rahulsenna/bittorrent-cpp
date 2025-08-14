@@ -121,45 +121,48 @@ int main(int argc, char* argv[])
         std::cout << decoded_value.dump() << std::endl;
     }
     else if (command == "info")
+    {
+        if (argc < 3)
         {
-            if (argc < 3)
-            {
-                std::cerr << "Usage: " << argv[0] << " info <file>" << std::endl;
-                return 1;
-            }
-
-            std::string file_name = argv[2];
-            std::ifstream file = std::ifstream(file_name, std::ios::binary);
-            if (!file)
-            {
-                std::cerr << "Error opening file\n";
-                return 1;
-            }
-
-            file.seekg(0, std::ios::end);
-            size_t file_size = file.tellg();
-            file.seekg(0, std::ios::beg);
-
-            std::string buffer;
-            buffer.resize(file_size);
-            file.read(buffer.data(), file_size);
-            file.close();
-
-            json decoded_value = decode_bencoded_value(buffer);
-            std::cout << "Tracker URL: " << decoded_value["announce"].get<std::string>() << '\n';
-            std::cout << "Length: " << decoded_value["info"]["length"] << '\n';
-            int info_idx = buffer.find("4:info") + strlen("4:info");
-            auto info_coded = buffer.substr(info_idx, buffer.size()-info_idx-1);
-            std::cout << "Info Hash: " << sha1(info_coded) << std::endl;
-            std::cout << "Piece Length: " << decoded_value["info"]["piece length"] << std::endl;
-
-            std::string pieces_str = decoded_value["info"]["pieces"].get<std::string>();
-            std::cout << "Piece Hashes: ";
-            for (uint8_t byte : pieces_str)
-                printf("%02x", byte);
-            std::cout << '\n';
-            
+            std::cerr << "Usage: " << argv[0] << " info <file>" << std::endl;
+            return 1;
         }
+
+        std::string file_name = argv[2];
+        std::ifstream file = std::ifstream(file_name, std::ios::binary);
+        if (!file)
+        {
+            std::cerr << "Error opening file\n";
+            return 1;
+        }
+
+        file.seekg(0, std::ios::end);
+        size_t file_size = file.tellg();
+        file.seekg(0, std::ios::beg);
+
+        std::string buffer;
+        buffer.resize(file_size);
+        file.read(buffer.data(), file_size);
+        file.close();
+
+        json decoded_value = decode_bencoded_value(buffer);
+        std::cout << "Tracker URL: " << decoded_value["announce"].get<std::string>() << '\n';
+        std::cout << "Length: " << decoded_value["info"]["length"] << '\n';
+        int info_idx = buffer.find("4:info") + strlen("4:info");
+        auto info_coded = buffer.substr(info_idx, buffer.size() - info_idx - 1);
+        std::cout << "Info Hash: " << sha1(info_coded) << std::endl;
+        std::cout << "Piece Length: " << decoded_value["info"]["piece length"] << std::endl;
+
+        std::string pieces_str = decoded_value["info"]["pieces"].get<std::string>();
+        std::cout << "Piece Hashes: ";
+        for (uint8_t byte : pieces_str)
+            printf("%02x", byte);
+        std::cout << '\n';
+    }
+    else if (command == "peers")
+    {
+        
+    }
     else
     {
         std::cerr << "unknown command: " << command << std::endl;

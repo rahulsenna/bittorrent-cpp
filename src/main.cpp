@@ -4,9 +4,12 @@
 #include <cctype>
 #include <cstdlib>
 #include <fstream>
+#include <format>
+#include <sstream>
 
 #include "lib/nlohmann/json.hpp"
 #include "lib/sha1.hpp"
+#include <curl/curl.h>
 
 using json = nlohmann::json;
 
@@ -92,6 +95,58 @@ json decode_bencoded_value(const std::string& encoded_value, int *offset = &defa
     }
 }
 
+static size_t WriteCallback(void *contents, size_t size, size_t nmemb, std::string *userp)
+{
+    userp->append((char *)contents, size * nmemb);
+    return size * nmemb;
+}
+
+std::string process_torrent_file(std::string &file_name)
+{
+    std::ifstream file = std::ifstream(file_name, std::ios::binary);
+    if (!file)
+    {
+        std::cerr << "Error opening file\n";
+        return "";
+    }
+
+    file.seekg(0, std::ios::end);
+    size_t file_size = file.tellg();
+    file.seekg(0, std::ios::beg);
+
+    std::string buffer;
+    buffer.resize(file_size);
+    file.read(buffer.data(), file_size);
+    file.close();
+
+    return buffer;
+}
+
+std::string hex_to_bytes(const std::string &hex)
+{
+    std::string bytes;
+    for (size_t i = 0; i < hex.length(); i += 2)
+    {
+        std::string byte_string = hex.substr(i, 2);
+        uint8_t byte = (uint8_t)(std::stoi(byte_string, nullptr, 16));
+        bytes.push_back(byte);
+    }
+    return bytes;
+}
+
+std::string url_encode_binary(const std::string &binary_data)
+{
+    std::ostringstream encoded;
+    encoded.fill('0');
+    encoded << std::hex << std::uppercase;
+
+    for (uint8_t c : binary_data)
+    {
+        encoded << '%' << std::setw(2) << static_cast<int>(c);
+    }
+    return encoded.str();
+}
+
 int main(int argc, char* argv[])
 {
     // Flush after every std::cout / std::cerr
@@ -129,22 +184,7 @@ int main(int argc, char* argv[])
         }
 
         std::string file_name = argv[2];
-        std::ifstream file = std::ifstream(file_name, std::ios::binary);
-        if (!file)
-        {
-            std::cerr << "Error opening file\n";
-            return 1;
-        }
-
-        file.seekg(0, std::ios::end);
-        size_t file_size = file.tellg();
-        file.seekg(0, std::ios::beg);
-
-        std::string buffer;
-        buffer.resize(file_size);
-        file.read(buffer.data(), file_size);
-        file.close();
-
+        auto buffer = process_torrent_file(file_name);
         json decoded_value = decode_bencoded_value(buffer);
         std::cout << "Tracker URL: " << decoded_value["announce"].get<std::string>() << '\n';
         std::cout << "Length: " << decoded_value["info"]["length"] << '\n';
@@ -161,7 +201,55 @@ int main(int argc, char* argv[])
     }
     else if (command == "peers")
     {
-        
+        if (argc < 3)
+        {
+            std::cerr << "Usage: " << argv[0] << " peers <file>" << std::endl;
+            return 1;
+        }
+        std::string file_name = argv[2];
+        auto buffer = process_torrent_file(file_name);
+        json decoded_value = decode_bencoded_value(buffer);
+
+        std::string tracker_url = decoded_value["announce"].get<std::string>();
+        auto length = decoded_value["info"]["length"].get<int>();
+
+        int info_idx = buffer.find("4:info") + strlen("4:info");
+        auto info_coded = buffer.substr(info_idx, buffer.size() - info_idx - 1);
+        auto hex_hash = sha1(info_coded);
+        std::string binary_hash = hex_to_bytes(hex_hash); // Now 20 bytes
+        std::string url_encoded_hash = url_encode_binary(binary_hash);
+
+        auto url = std::format("{}?port=6881&left={}&downloaded=0&uploaded=0&compact=1&peer_id=THIS_IS_SPARTA_JKl0l&info_hash={}", tracker_url, length, url_encoded_hash);
+        std::cerr << "url: " << url << '\n';
+        std::string response;
+        CURL *curl = curl_easy_init();
+        curl_easy_setopt(curl, CURLOPT_URL, url.c_str());
+        curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, WriteCallback);
+        curl_easy_setopt(curl, CURLOPT_WRITEDATA, &response);
+        curl_easy_setopt(curl, CURLOPT_FOLLOWLOCATION, 1L);
+
+        CURLcode res = curl_easy_perform(curl);
+
+        if (res != CURLE_OK)
+        {
+            std::cerr << "curl_easy_perform() failed: " << curl_easy_strerror(res) << std::endl;
+        }
+        json decoded_resp = decode_bencoded_value(response);
+        auto peers_bin = decoded_resp["peers"].get<std::string>();
+        std::string out = "";
+
+        for (int i = 0; i < peers_bin.length(); i += 6)
+        {
+            uint8_t b = peers_bin[i];
+            out += std::to_string((uint8_t)peers_bin[i]) + '.';
+            out += std::to_string((uint8_t)peers_bin[i + 1]) + '.';
+            out += std::to_string((uint8_t)peers_bin[i + 2]) + '.';
+            out += std::to_string((uint8_t)peers_bin[i + 3]) + ':';
+
+            uint16_t port = ((uint8_t)peers_bin[i + 4] << 8) | (uint8_t)peers_bin[i + 5];
+            out += std::to_string(port) + '\n';
+        }
+        std::cout << out << '\n';
     }
     else
     {

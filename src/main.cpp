@@ -7,6 +7,12 @@
 #include <format>
 #include <sstream>
 
+#include <sys/socket.h>
+#include <netinet/in.h>
+#include <netinet/ip.h>
+#include <arpa/inet.h>
+#include <unistd.h>
+
 #include "lib/nlohmann/json.hpp"
 #include "lib/sha1.hpp"
 #include <curl/curl.h>
@@ -134,6 +140,17 @@ std::string hex_to_bytes(const std::string &hex)
     return bytes;
 }
 
+std::string bytes_to_hex(const unsigned char *bytes, size_t length)
+{
+    std::string hex;
+    hex.reserve(length * 2);
+    for (size_t i = 0; i < length; ++i) {
+        hex += std::format("{:02x}", bytes[i]);  // C++20
+    }
+    return hex;
+}
+
+
 std::string url_encode_binary(const std::string &binary_data)
 {
     std::ostringstream encoded;
@@ -251,6 +268,60 @@ int main(int argc, char* argv[])
         }
         std::cout << out << '\n';
     }
+    else if (command == "handshake")
+    {
+        if (argc < 3)
+        {
+            std::cerr << "Usage: " << argv[0] << " handshake sample.torrent <peer_ip>:<peer_port>" << std::endl;
+            return 1;
+        }
+        std::string file_name = argv[2];
+        std::string peer = argv[3];
+
+        auto buffer = process_torrent_file(file_name);
+        json decoded_value = decode_bencoded_value(buffer);
+
+        int info_idx = buffer.find("4:info") + strlen("4:info");
+        auto info_coded = buffer.substr(info_idx, buffer.size() - info_idx - 1);
+        auto hex_hash = sha1(info_coded);
+        std::string binary_hash = hex_to_bytes(hex_hash); // Now 20 bytes
+
+        //--------------[ Connect ]-------------------------------------------
+        std::string peer_ip = peer.substr(0, peer.find(':'));
+        int port = atoi(peer.substr(peer_ip.length() + 1).c_str());
+        int sock_fd = socket(AF_INET, SOCK_STREAM, 0);
+        struct sockaddr_in peer_addr = {
+            .sin_family = AF_INET,
+            .sin_port = htons(port),
+            .sin_addr = {htonl(INADDR_ANY)},
+        };
+        inet_pton(AF_INET, peer_ip.c_str(), &peer_addr.sin_addr);
+        connect(sock_fd, (struct sockaddr *)&peer_addr, sizeof(peer_addr));
+
+        // 68-byte handshake
+        char handshake[68];
+        handshake[0] = 19; // length prefix
+        memcpy(handshake + 1, "BitTorrent protocol", 19);
+        memset(handshake + 20, 0, 8);                       // reserved bytes
+        memcpy(handshake + 28, binary_hash.c_str(), 20);    // SHA1 hash
+        memcpy(handshake + 48, "THIS_IS_SPARTA_JKl0l", 20); // peer identifier
+
+        ssize_t bytes_sent = write(sock_fd, handshake, 68);
+
+        char response[68];
+        ssize_t bytes_read = read(sock_fd, response, 68);
+        //--------------[ Connect ]-------------------------------------------
+
+        if (bytes_read == 68 && response[0] == 19)
+        {
+            if (memcmp(response + 28, binary_hash.c_str(), 20) == 0)
+            {
+                auto res = bytes_to_hex((uint8_t *)(response + 48), 20);
+                std::cout << "Peer ID: " << res << '\n';
+            }
+        }
+    }
+
     else
     {
         std::cerr << "unknown command: " << command << std::endl;

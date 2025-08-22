@@ -18,6 +18,19 @@
 #include "lib/sha1.hpp"
 #include <curl/curl.h>
 
+enum MessageID
+{
+    Choke_MSG = 0x0,
+    Unchoke_MSG,
+    Interested_MSG,
+    Not_MSGInterested,
+    Have_MSG,
+    Bitfield_MSG,
+    Request_MSG,
+    Piece_MSG,
+    Cancel_MSG,
+};
+
 using json = nlohmann::json;
 
 int default_offset;
@@ -339,6 +352,25 @@ int handshake(std::string &peer, std::string &info_hash_bytes, bool extension = 
                 write(sock_fd, (char[])20, 1);
                 write(sock_fd, (char[])0, 1);
                 write(sock_fd, out.c_str(), out.length());
+
+                //--[ BitField]--------------------
+                uint32_t message_len;
+                read(sock_fd, &message_len, 4);
+                message_len = ntohl(message_len);
+                read(sock_fd, response, message_len);
+
+                //--[ Receive Extension Handshake ]--------------------
+                read(sock_fd, &message_len, 4);
+                message_len = ntohl(message_len);
+                read(sock_fd, response, 2); // Message ID and Ext Message ID
+                message_len -= 2;
+
+                std::string bufstr("", message_len);
+                size_t bytes_read = read(sock_fd, bufstr.data(), message_len);
+                
+                auto decoded_value = decode_bencoded_value(bufstr);
+                int ut_metadata = decoded_value["m"]["ut_metadata"].get<int>();
+                std::cout << "Peer Metadata Extension ID: " << ut_metadata << '\n';
             }
         }
         else
@@ -347,18 +379,6 @@ int handshake(std::string &peer, std::string &info_hash_bytes, bool extension = 
     return sock_fd;
 }
 
-enum MessageID
-{
-    Choke_MSG = 0x0,
-    Unchoke_MSG,
-    Interested_MSG,
-    Not_MSGInterested,
-    Have_MSG,
-    Bitfield_MSG,
-    Request_MSG,
-    Piece_MSG,
-    Cancel_MSG,
-};
 
 std::vector<int> get_peers_connections(std::string &buffer)
 {

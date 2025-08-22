@@ -243,6 +243,55 @@ std::string get_peers(std::string &buffer)
     return get_peers(tracker_url, info_hash_bytes, length);
 };
 
+void hexdump(const void *data, size_t size)
+{
+    const unsigned char *byte = (const unsigned char *)data;
+    char buffer[4096];
+    size_t buf_used = 0;
+    size_t i, j;
+
+    for (i = 0; i < size; i += 16) {
+        char line[80];  // A line won't exceed 80 chars
+        int len = snprintf(line, sizeof(line), "%08zx  ", i);
+
+        // Hex part
+        for (j = 0; j < 16; j++) {
+            if (i + j < size)
+                len += snprintf(line + len, sizeof(line) - len, "%02x ", byte[i + j]);
+            else
+                len += snprintf(line + len, sizeof(line) - len, "   ");
+            if (j == 7)
+                len += snprintf(line + len, sizeof(line) - len, " ");
+        }
+
+        // ASCII part
+        len += snprintf(line + len, sizeof(line) - len, " |");
+        for (j = 0; j < 16 && i + j < size; j++) {
+            unsigned char ch = byte[i + j];
+            len += snprintf(line + len, sizeof(line) - len, "%c", isprint(ch) ? ch : '.');
+        }
+        len += snprintf(line + len, sizeof(line) - len, "|\n");
+
+        // Append line to buffer
+        if (buf_used + len < sizeof(buffer)) {
+            memcpy(buffer + buf_used, line, len);
+            buf_used += len;
+        } else {
+            // Prevent buffer overflow
+            break;
+        }
+    }
+
+    // Null-terminate and print once
+    buffer[buf_used] = '\0';
+    fprintf(stderr,
+           "Idx       | Hex                                             | ASCII\n"
+           "----------+-------------------------------------------------+-----------------\n"
+           "%s",
+           buffer);
+}
+
+
 int handshake(std::string &peer, std::string &info_hash_bytes, bool extension = false)
 {
     //--------------[ Connect ]-------------------------------------------
@@ -280,11 +329,21 @@ int handshake(std::string &peer, std::string &info_hash_bytes, bool extension = 
         {
             auto res = bytes_to_hex((uint8_t *)(response + 48), 20);
             std::cout << "Peer ID: " << res << '\n';
+            if (response[25] == 0x10)
+            {
+                std::cerr << "---------[ Extension Supported ]---------" << '\n';
+                std::string out = "d1:md11:ut_metadatai1e6:ut_pexi2ee1:pi6881ee";
+                uint32_t len = out.length() + /* message id */ 1 + /* ext message id */ 1;
+                len = htonl(len);
+                write(sock_fd, &len, 4);
+                write(sock_fd, (char[])20, 1);
+                write(sock_fd, (char[])0, 1);
+                write(sock_fd, out.c_str(), out.length());
+            }
         }
         else
             sock_fd = -1;
     }
-
     return sock_fd;
 }
 

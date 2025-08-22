@@ -199,13 +199,8 @@ std::string get_info_hash_bytes(std::string &buffer)
     return hex_to_bytes(hex_hash);
 }
 
-std::string get_peers(std::string &buffer)
+std::string get_peers(std::string &tracker_url, std::string &info_hash_bytes, int length=1)
 {
-    json decoded_value = decode_bencoded_value(buffer);
-    std::string tracker_url = decoded_value["announce"].get<std::string>();
-    auto length = decoded_value["info"]["length"].get<int>();
-
-    auto info_hash_bytes = get_info_hash_bytes(buffer);
     std::string url_encoded_hash = url_encode_binary(info_hash_bytes);
     auto url = std::format("{}?port=6881&left={}&downloaded=0&uploaded=0&compact=1&peer_id=THIS_IS_SPARTA_JKl0l&info_hash={}", tracker_url, length, url_encoded_hash);
     std::cerr << "url: " << url << '\n';
@@ -239,8 +234,16 @@ std::string get_peers(std::string &buffer)
     }
     return out.substr(0, out.length()-1);
 }
+std::string get_peers(std::string &buffer)
+{
+    json decoded_value = decode_bencoded_value(buffer);
+    std::string tracker_url = decoded_value["announce"].get<std::string>();
+    int length = decoded_value["info"]["length"].get<int>();
+    std::string info_hash_bytes = get_info_hash_bytes(buffer);
+    return get_peers(tracker_url, info_hash_bytes, length);
+};
 
-int handshake(std::string &peer, std::string &info_hash_bytes)
+int handshake(std::string &peer, std::string &info_hash_bytes, bool extension = false)
 {
     //--------------[ Connect ]-------------------------------------------
     std::string peer_ip = peer.substr(0, peer.find(':'));
@@ -261,6 +264,9 @@ int handshake(std::string &peer, std::string &info_hash_bytes)
     memset(handshake_buf + 20, 0, 8);                       // reserved bytes
     memcpy(handshake_buf + 28, info_hash_bytes.c_str(), 20);    // SHA1 hash
     memcpy(handshake_buf + 48, "THIS_IS_SPARTA_JKl0l", 20); // peer identifier
+
+    if (extension)
+        handshake_buf[25] = 0x10;
 
     ssize_t bytes_sent = write(sock_fd, handshake_buf, 68);
 
@@ -559,6 +565,26 @@ int main(int argc, char* argv[])
 
         std::cout << "Info Hash: " << info_hash << '\n';
         std::cout << "Tracker URL: " << url_decode(url) << '\n';
+    }
+    else if (command == "magnet_handshake")
+    {
+        if (argc < 3)
+        {
+            std::cerr << "Usage: " << argv[0] << " magnet_handshake <magnet-link>" << std::endl;
+            return 1;
+        }
+        std::string magnet_link = argv[2];
+        auto pos = magnet_link.find("xt=urn:btih:") + strlen("xt=urn:btih:");
+        std::string info_hash = magnet_link.substr(pos, 40);
+        pos = magnet_link.find("tr=") + strlen("tr=");
+        std::string tracker_url = url_decode(magnet_link.substr(pos, magnet_link.length() - pos));
+
+        std::cout << "Info Hash: " << info_hash << '\n';
+        std::cout << "Tracker URL: " << tracker_url << '\n';
+        
+        std::string bytes_info_hash = hex_to_bytes(info_hash);
+        std::string peers = get_peers(tracker_url, bytes_info_hash);
+        handshake(peers, bytes_info_hash, true);
     }
 
     else

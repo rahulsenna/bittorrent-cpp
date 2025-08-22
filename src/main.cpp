@@ -8,10 +8,6 @@
 #include <sstream>
 #include <thread>
 
-#include <numeric>
-#include <random>
-#include <set>
-
 #include <sys/socket.h>
 #include <netinet/in.h>
 #include <netinet/ip.h>
@@ -166,6 +162,33 @@ std::string url_encode_binary(const std::string &binary_data)
         encoded << '%' << std::setw(2) << static_cast<int>(c);
     }
     return encoded.str();
+}
+std::string url_decode(const std::string &encoded)
+{
+    std::string decoded;
+    decoded.reserve(encoded.size());
+
+    for (char *chr = (char *)encoded.data(); *chr; chr++)
+    {
+        if ((*chr) == '%')
+        {
+            std::stringstream hex_stream;
+            hex_stream << *(chr + 1);
+            hex_stream << *(chr + 2);
+            int hex_value;
+            if (hex_stream >> std::hex >> hex_value)
+            {
+                decoded += (char)(hex_value);
+                chr += 2;
+            }
+            else
+                decoded += (*chr);
+        }
+        else
+            decoded += (*chr);
+    }
+
+    return decoded;
 }
 
 std::string get_info_hash_bytes(std::string &buffer)
@@ -518,6 +541,24 @@ int main(int argc, char* argv[])
             file.write((const char *)file_buffer, total_size);
             file.close();
         }
+    }
+    else if (command == "magnet_parse")
+    {
+        if (argc < 3)
+        {
+            std::cerr << "Usage: " << argv[0] << " magnet_parse <magnet-link>" << std::endl;
+            return 1;
+        }
+
+        std::string magnet_link = argv[2];
+        auto pos = magnet_link.find("xt=urn:btih:") + strlen("xt=urn:btih:");
+
+        std::string info_hash = magnet_link.substr(pos, 40);
+        pos = magnet_link.find("tr=") + strlen("tr=");
+        std::string url = magnet_link.substr(pos, magnet_link.length() - pos);
+
+        std::cout << "Info Hash: " << info_hash << '\n';
+        std::cout << "Tracker URL: " << url_decode(url) << '\n';
     }
 
     else

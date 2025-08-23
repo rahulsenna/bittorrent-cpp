@@ -357,8 +357,8 @@ PeerInfo handshake(std::string &peer, std::string &info_hash_bytes, bool extensi
                 uint32_t len = out.length() + /* message id */ 1 + /* ext message id */ 1;
                 len = htonl(len);
                 write(res.sock_fd, &len, 4);
-                write(res.sock_fd, (char[])20, 1);
-                write(res.sock_fd, (char[])0, 1);
+                write(res.sock_fd, (char[]){20}, 1);
+                write(res.sock_fd, (char[]){0}, 1);
                 write(res.sock_fd, out.c_str(), out.length());
 
                 //--[ BitField]--------------------
@@ -513,7 +513,7 @@ json get_magnet_metadata(PeerInfo &peer)
     uint32_t len = payload.length() + 2;
     len = htonl(len);
     write(peer.sock_fd, &len, 4);
-    write(peer.sock_fd, (char[])20, 1);
+    write(peer.sock_fd, (char[]){20}, 1);
     write(peer.sock_fd, &peer.ut_metadata, 1);
     write(peer.sock_fd, payload.c_str(), payload.length());
 

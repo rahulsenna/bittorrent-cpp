@@ -1,0 +1,73 @@
+{
+    
+
+    "memory-view.showMemoryPanel": true,
+    "[c]":{
+        "editor.lineNumbers": "off"
+    },
+    "[plaintext]":{
+        "editor.lineNumbers": "off",
+
+    },
+    
+    "workspaceKeybindings.codecrafters.enabled": true,
+    "files.associations": {
+        "*.ejs": "html",
+        ".fantomasignore": "ignore",
+        "__hash_table": "c",
+        "array": "c",
+        "complex": "c",
+        "type_traits": "c",
+        "limits": "c",
+        "ratio": "c",
+        "variant": "c",
+        "string": "cpp",
+        "fstream": "cpp",
+        "locale": "cpp",
+        "__bit_reference": "cpp",
+        "__locale": "cpp",
+        "__split_buffer": "cpp",
+        "__verbose_abort": "cpp",
+        "any": "cpp",
+        "bitset": "cpp",
+        "cctype": "cpp",
+        "clocale": "cpp",
+        "cmath": "cpp",
+        "cstddef": "cpp",
+        "cstdint": "cpp",
+        "cstdio": "cpp",
+        "cstdlib": "cpp",
+        "cstring": "cpp",
+        "cwchar": "cpp",
+        "cwctype": "cpp",
+        "forward_list": "cpp",
+        "initializer_list": "cpp",
+        "iomanip": "cpp",
+        "ios": "cpp",
+        "iosfwd": "cpp",
+        "iostream": "cpp",
+        "istream": "cpp",
+        "map": "cpp",
+        "mutex": "cpp",
+        "new": "cpp",
+        "print": "cpp",
+        "stdexcept": "cpp",
+        "streambuf": "cpp",
+        "string_view": "cpp",
+        "typeinfo": "cpp",
+        "unordered_map": "cpp",
+        "valarray": "cpp",
+        "vector": "cpp",
+        "__node_handle": "cpp",
+        "__tree": "cpp",
+        "cstdarg": "cpp",
+        "ctime": "cpp",
+        "deque": "cpp",
+        "execution": "cpp",
+        "optional": "cpp",
+        "queue": "cpp",
+        "stack": "cpp",
+        "format": "cpp"
+    } // setting can be anything you want
+
+}

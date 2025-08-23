@@ -1,0 +1,32 @@
+{
+    // Use IntelliSense to learn about possible attributes.
+    // Hover to view descriptions of existing attributes.
+    // For more information, visit: https://go.microsoft.com/fwlink/?linkid=830387
+    "version": "0.2.0",
+    "configurations": [
+
+    {
+        "name": "run server",
+        "type": "cppdbg",
+        "request": "launch",
+        "program": "${workspaceFolder}/build/bittorrent",
+        // "args": ["decode", "l5:helloi52ee"],
+        // "args": ["decode", "lli78e6:bananaee"],
+        // "args": ["decode", "lli4eei5ee"],
+        // "args": ["decode", "d3:foo3:bar5:helloi52ee"],
+        // "args": ["info", "/var/folders/0y/wdv0jtw90_gb738gt3zpjk2h0000gn/T/torrents4179783513/congratulations.gif.torrent"],
+        // "args": ["peers", "/var/folders/0y/wdv0jtw90_gb738gt3zpjk2h0000gn/T/torrents4179783513/congratulations.gif.torrent"],
+        // "args": ["handshake", "/var/folders/0y/wdv0jtw90_gb738gt3zpjk2h0000gn/T/torrents3505952492/test.torrent", "127.0.0.1:49719"],
+        // "args": ["download_piece", "-o", "/var/folders/0y/wdv0jtw90_gb738gt3zpjk2h0000gn/T/torrents3101391468/piece-9", "/var/folders/0y/wdv0jtw90_gb738gt3zpjk2h0000gn/T/torrents2930345929/congratulations.gif.torrent", "2"],
+        // "args": [ "magnet_parse", "magnet:?xt=urn:btih:3f994a835e090238873498636b98a3e78d1c34ca&dn=magnet2.gif&tr=http%3A%2F%2Fbittorrent-test-tracker.codecrafters.io%2Fannounce"],
+        "args": [ "magnet_info", "magnet1.gif.torrent: magnet:?xt=urn:btih:ad42ce8109f54c99613ce38f9b4d87e70f24a165&dn=magnet1.gif&tr=http%3A%2F%2Fbittorrent-test-tracker.codecrafters.io%2Fannounce"],
+        // "args": ["--port","6380", "--replicaof", "localhost 6379"],
+        "stopAtEntry": false,
+        "cwd": "${workspaceFolder}/build",
+        "environment": [],
+        "externalConsole": false,
+        "MIMode": "lldb",
+        "preLaunchTask": "build_server"
+    }
+]
+}

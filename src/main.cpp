@@ -417,18 +417,24 @@ std::vector<int> get_peers_connections(std::string &buffer)
 constexpr uint32_t CHUNK_SIZE = 16 * 1024;
 constexpr size_t RESPONSE_BUFFER_SIZE = 1024;
 
-void download_piece(int sock_fd, uint8_t *piece_buffer, size_t piece_size, int piece_index)
+void download_piece(int sock_fd, uint8_t *piece_buffer, size_t piece_size, int piece_index, bool magnet = false)
 {
     uint8_t response[RESPONSE_BUFFER_SIZE];
 
     // Phase 1: Handle bitfield messages
-    uint32_t message_len_network;
-    read(sock_fd, &message_len_network, 4);
-    uint32_t message_len = ntohl(message_len_network);
-    read(sock_fd, response, message_len);
-    
-    if (response[0] == Bitfield_MSG)
-        write(sock_fd, (char[]){0, 0, 0, 1, Interested_MSG}, 5); 
+    uint32_t message_len_network, message_len;
+    if (magnet)
+    {
+        write(sock_fd, (char[]){0, 0, 0, 1, Interested_MSG}, 5);
+    } else
+    {
+        read(sock_fd, &message_len_network, 4);
+        message_len = ntohl(message_len_network);
+        read(sock_fd, response, message_len);
+
+        if (response[0] == Bitfield_MSG)
+            write(sock_fd, (char[]){0, 0, 0, 1, Interested_MSG}, 5);     
+    }
     
 
     // Phase 2: Handle unchoke and send requests
@@ -475,14 +481,8 @@ void download_piece(int sock_fd, uint8_t *piece_buffer, size_t piece_size, int p
     close(sock_fd);    
 }
 
-PeerInfo magnet_handshake(int argc, char* argv[])
+PeerInfo magnet_handshake(std::string &magnet_link)
 {
-    if (argc < 3)
-    {
-        std::cerr << "Usage: " << argv[0] << " magnet_handshake <magnet-link>" << std::endl;
-        return {};
-    }
-    std::string magnet_link = argv[2];
     auto pos = magnet_link.find("xt=urn:btih:") + strlen("xt=urn:btih:");
     std::string info_hash = magnet_link.substr(pos, 40);
     pos = magnet_link.find("tr=") + strlen("tr=");
@@ -494,6 +494,42 @@ PeerInfo magnet_handshake(int argc, char* argv[])
     std::string bytes_info_hash = hex_to_bytes(info_hash);
     std::string peers = get_peers(tracker_url, bytes_info_hash);
     return handshake(peers, bytes_info_hash, true);
+}
+
+PeerInfo magnet_handshake(int argc, char* argv[])
+{
+    if (argc < 3)
+    {
+        std::cerr << "Usage: " << argv[0] << " magnet_handshake <magnet-link>" << std::endl;
+        return {};
+    }
+    std::string magnet_link = argv[2];
+    return magnet_handshake(magnet_link);
+}
+
+json get_magnet_metadata(PeerInfo &peer)
+{
+    std::string payload = "d8:msg_typei0e5:piecei0ee";
+    uint32_t len = payload.length() + 2;
+    len = htonl(len);
+    write(peer.sock_fd, &len, 4);
+    write(peer.sock_fd, (char[])20, 1);
+    write(peer.sock_fd, &peer.ut_metadata, 1);
+    write(peer.sock_fd, payload.c_str(), payload.length());
+
+    char response[1024];
+    read(peer.sock_fd, &len, 4);
+    len = ntohl(len);
+    read(peer.sock_fd, response, 2); // Message ID and Ext Message ID
+    len -= 2;
+
+    std::string bufstr("", len);
+    size_t bytes_read = read(peer.sock_fd, bufstr.data(), len);
+
+    int offset = 0;
+    auto decoded_value = decode_bencoded_value(bufstr, &offset);
+    auto decoded_value2 = decode_bencoded_value(bufstr.substr(offset));
+    return decoded_value2;
 }
 
 int main(int argc, char* argv[])
@@ -646,7 +682,7 @@ int main(int argc, char* argv[])
 
                 size_t piece_size = (piece_index < piece_count) ? standard_piece_size : (total_size > used_len ? total_size - used_len : 0);
                 uint8_t *piece_buffer = file_buffer + (piece_index * standard_piece_size);
-                threads.emplace_back(download_piece, sock_fd, piece_buffer, piece_size, piece_index++);
+                threads.emplace_back(download_piece, sock_fd, piece_buffer, piece_size, piece_index++, false);
             }
             for (auto &thread : threads)
                 thread.join();
@@ -685,37 +721,49 @@ int main(int argc, char* argv[])
     {
         PeerInfo peer = magnet_handshake(argc, argv);
         
-        std::string payload = "d8:msg_typei0e5:piecei0ee";
-        uint32_t len = payload.length()+2;
-        len = htonl(len);
-        write(peer.sock_fd, &len, 4);
-        write(peer.sock_fd, (char[])20, 1);
-        write(peer.sock_fd, &peer.ut_metadata, 1);
-        write(peer.sock_fd, payload.c_str(), payload.length());
-
-        char response[1024];
-        read(peer.sock_fd, &len, 4);
-        len = ntohl(len);
-        read(peer.sock_fd, response, 2); // Message ID and Ext Message ID
-        len -= 2;
-
-        std::string bufstr("", len);
-        size_t bytes_read = read(peer.sock_fd, bufstr.data(), len);
-
-        int offset = 0;
-        auto decoded_value = decode_bencoded_value(bufstr, &offset);
-        auto decoded_value2 = decode_bencoded_value(bufstr.substr(offset));
-
-        int length = decoded_value2["length"];
-        int piece_length = decoded_value2["piece length"];
+        auto metadata = get_magnet_metadata(peer);
+        int length = metadata["length"];
+        int piece_length = metadata["piece length"];
         std::cout << "Length: " << length << '\n';
         std::cout << "Piece Length: " << piece_length << '\n';
 
-        std::string pieces_hash_bytes = decoded_value2["pieces"].get<std::string>();
+        std::string pieces_hash_bytes = metadata["pieces"].get<std::string>();
         std::string pieces_hash = bytes_to_hex((uint8_t *)pieces_hash_bytes.c_str(), pieces_hash_bytes.length());
 
         for (int i = 0; i < pieces_hash.length(); i += 40)
             std::cout << pieces_hash.substr(i, 40) << '\n';
+    }
+
+    else if (command == "magnet_download_piece")
+    {
+        if (argc < 6)
+        {
+            std::cerr << "Usage: " << argv[0] << " magnet_download_piece -o out_file <magnet-link> <piece_index>" << std::endl;
+            return 1;
+        }
+        std::string out_file = argv[3];
+        std::string magnet_link = argv[4];
+        int piece_index = atoi(argv[5]);
+
+        PeerInfo peer = magnet_handshake(magnet_link);
+        auto metadata = get_magnet_metadata(peer);
+
+        int total_size = metadata["length"];
+        int std_piece_len = metadata["piece length"];
+
+        size_t piece_count = total_size / std_piece_len;
+        size_t used_len = piece_count * std_piece_len;
+        size_t piece_size = (piece_index < piece_count) ? std_piece_len : (total_size > used_len ? total_size - used_len : 0);
+        uint8_t *piece_buffer = (uint8_t *)malloc(piece_size);
+
+        download_piece(peer.sock_fd, piece_buffer, piece_size, piece_index, true);
+
+        std::ofstream file = std::ofstream(out_file, std::ios::binary);
+        if (file)
+        {
+            file.write((const char *)piece_buffer, piece_size);
+            file.close();
+        }
     }
 
     else

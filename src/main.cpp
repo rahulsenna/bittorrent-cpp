@@ -692,6 +692,30 @@ int main(int argc, char* argv[])
         write(peer.sock_fd, (char[])20, 1);
         write(peer.sock_fd, &peer.ut_metadata, 1);
         write(peer.sock_fd, payload.c_str(), payload.length());
+
+        char response[1024];
+        read(peer.sock_fd, &len, 4);
+        len = ntohl(len);
+        read(peer.sock_fd, response, 2); // Message ID and Ext Message ID
+        len -= 2;
+
+        std::string bufstr("", len);
+        size_t bytes_read = read(peer.sock_fd, bufstr.data(), len);
+
+        int offset = 0;
+        auto decoded_value = decode_bencoded_value(bufstr, &offset);
+        auto decoded_value2 = decode_bencoded_value(bufstr.substr(offset));
+
+        int length = decoded_value2["length"];
+        int piece_length = decoded_value2["piece length"];
+        std::cout << "Length: " << length << '\n';
+        std::cout << "Piece Length: " << piece_length << '\n';
+
+        std::string pieces_hash_bytes = decoded_value2["pieces"].get<std::string>();
+        std::string pieces_hash = bytes_to_hex((uint8_t *)pieces_hash_bytes.c_str(), pieces_hash_bytes.length());
+
+        for (int i = 0; i < pieces_hash.length(); i += 40)
+            std::cout << pieces_hash.substr(i, 40) << '\n';
     }
 
     else

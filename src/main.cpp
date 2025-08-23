@@ -648,6 +648,10 @@ int main(int argc, char* argv[])
             file.write((const char *)piece_buffer, piece_size);
             file.close();
         }
+
+        for (auto sock_fd: sockets)
+        	close(sock_fd);
+        
     }
 
     else if (command == "download")

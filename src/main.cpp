@@ -765,6 +765,41 @@ int main(int argc, char* argv[])
             file.close();
         }
     }
+    else if (command == "magnet_download")
+    {
+        if (argc < 5)
+        {
+            std::cerr << "Usage: " << argv[0] << " magnet_download_piece -o out_file <magnet-link> <piece_index>" << std::endl;
+            return 1;
+        }
+        std::string out_file = argv[3];
+        std::string magnet_link = argv[4];
+
+        PeerInfo peer = magnet_handshake(magnet_link);
+        auto metadata = get_magnet_metadata(peer);
+
+        int total_size = metadata["length"];
+        int std_piece_len = metadata["piece length"];
+
+        size_t piece_count = total_size / std_piece_len;
+        size_t used_len = piece_count * std_piece_len;
+        uint8_t *file_buffer = (uint8_t *)malloc(total_size);
+
+        for (int piece_index = 0; piece_index <= piece_count; ++piece_index)
+        {
+            size_t piece_size = (piece_index < piece_count) ? std_piece_len : (total_size > used_len ? total_size - used_len : 0);
+            uint8_t *piece_buffer = file_buffer + (piece_index * std_piece_len);
+            download_piece(peer.sock_fd, piece_buffer, piece_size, piece_index, true);
+            peer = magnet_handshake(magnet_link);
+        }
+        
+        std::ofstream file = std::ofstream(out_file, std::ios::binary);
+        if (file)
+        {
+            file.write((const char *)file_buffer, total_size);
+            file.close();
+        }
+    }
 
     else
     {

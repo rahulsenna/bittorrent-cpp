@@ -305,19 +305,27 @@ void hexdump(const void *data, size_t size)
 }
 
 
-int handshake(std::string &peer, std::string &info_hash_bytes, bool extension = false)
+struct PeerInfo
+{
+    int sock_fd = -1;
+    uint8_t ut_metadata = 0;
+    bool extension = false;
+};
+
+PeerInfo handshake(std::string &peer, std::string &info_hash_bytes, bool extension = false)
 {
     //--------------[ Connect ]-------------------------------------------
     std::string peer_ip = peer.substr(0, peer.find(':'));
     int port = atoi(peer.substr(peer_ip.length() + 1).c_str());
-    int sock_fd = socket(AF_INET, SOCK_STREAM, 0);
+    PeerInfo res;
+    res.sock_fd = socket(AF_INET, SOCK_STREAM, 0);
     struct sockaddr_in peer_addr = {
         .sin_family = AF_INET,
         .sin_port = htons(port),
         .sin_addr = {htonl(INADDR_ANY)},
     };
     inet_pton(AF_INET, peer_ip.c_str(), &peer_addr.sin_addr);
-    connect(sock_fd, (struct sockaddr *)&peer_addr, sizeof(peer_addr));
+    connect(res.sock_fd, (struct sockaddr *)&peer_addr, sizeof(peer_addr));
 
     // 68-byte handshake
     char handshake_buf[68];
@@ -330,53 +338,56 @@ int handshake(std::string &peer, std::string &info_hash_bytes, bool extension = 
     if (extension)
         handshake_buf[25] = 0x10;
 
-    ssize_t bytes_sent = write(sock_fd, handshake_buf, 68);
+    ssize_t bytes_sent = write(res.sock_fd, handshake_buf, 68);
 
     char response[68];
-    ssize_t bytes_read = read(sock_fd, response, 68);
+    ssize_t bytes_read = read(res.sock_fd, response, 68);
     //--------------[ Connect ]-------------------------------------------
 
     if (bytes_read == 68 && response[0] == 19)
     {
         if (memcmp(response + 28, info_hash_bytes.c_str(), 20) == 0)
         {
-            auto res = bytes_to_hex((uint8_t *)(response + 48), 20);
-            std::cout << "Peer ID: " << res << '\n';
+            auto peer_id = bytes_to_hex((uint8_t *)(response + 48), 20);
+            std::cout << "Peer ID: " << peer_id << '\n';
             if (response[25] == 0x10)
             {
                 std::cerr << "---------[ Extension Supported ]---------" << '\n';
                 std::string out = "d1:md11:ut_metadatai1e6:ut_pexi2ee1:pi6881ee";
                 uint32_t len = out.length() + /* message id */ 1 + /* ext message id */ 1;
                 len = htonl(len);
-                write(sock_fd, &len, 4);
-                write(sock_fd, (char[])20, 1);
-                write(sock_fd, (char[])0, 1);
-                write(sock_fd, out.c_str(), out.length());
+                write(res.sock_fd, &len, 4);
+                write(res.sock_fd, (char[])20, 1);
+                write(res.sock_fd, (char[])0, 1);
+                write(res.sock_fd, out.c_str(), out.length());
 
                 //--[ BitField]--------------------
                 uint32_t message_len;
-                read(sock_fd, &message_len, 4);
+                read(res.sock_fd, &message_len, 4);
                 message_len = ntohl(message_len);
-                read(sock_fd, response, message_len);
+                read(res.sock_fd, response, message_len);
 
                 //--[ Receive Extension Handshake ]--------------------
-                read(sock_fd, &message_len, 4);
+                read(res.sock_fd, &message_len, 4);
                 message_len = ntohl(message_len);
-                read(sock_fd, response, 2); // Message ID and Ext Message ID
+                read(res.sock_fd, response, 2); // Message ID and Ext Message ID
                 message_len -= 2;
 
                 std::string bufstr("", message_len);
-                size_t bytes_read = read(sock_fd, bufstr.data(), message_len);
+                size_t bytes_read = read(res.sock_fd, bufstr.data(), message_len);
                 
                 auto decoded_value = decode_bencoded_value(bufstr);
-                int ut_metadata = decoded_value["m"]["ut_metadata"].get<int>();
-                std::cout << "Peer Metadata Extension ID: " << ut_metadata << '\n';
+                uint8_t ut_metadata = decoded_value["m"]["ut_metadata"].get<uint8_t>();
+                std::cout << "Peer Metadata Extension ID: " << (int)ut_metadata << '\n';
+
+                res.ut_metadata = ut_metadata ;
+                res.extension = true;
             }
         }
         else
-            sock_fd = -1;
+            res.sock_fd = -1;
     }
-    return sock_fd;
+    return res;
 }
 
 
@@ -395,7 +406,7 @@ std::vector<int> get_peers_connections(std::string &buffer)
     for (auto &peer : peers)
     {
         threads.emplace_back([&]() { 
-            sockets.push_back(handshake(peer, info_hash_bytes));
+            sockets.push_back(handshake(peer, info_hash_bytes).sock_fd);
         });
     }
     for (auto &thread : threads)
@@ -462,6 +473,27 @@ void download_piece(int sock_fd, uint8_t *piece_buffer, size_t piece_size, int p
             block_bytes_read += read(sock_fd, piece_buffer + byte_offset + block_bytes_read, block_len - block_bytes_read);
     }
     close(sock_fd);    
+}
+
+PeerInfo magnet_handshake(int argc, char* argv[])
+{
+    if (argc < 3)
+    {
+        std::cerr << "Usage: " << argv[0] << " magnet_handshake <magnet-link>" << std::endl;
+        return {};
+    }
+    std::string magnet_link = argv[2];
+    auto pos = magnet_link.find("xt=urn:btih:") + strlen("xt=urn:btih:");
+    std::string info_hash = magnet_link.substr(pos, 40);
+    pos = magnet_link.find("tr=") + strlen("tr=");
+    std::string tracker_url = url_decode(magnet_link.substr(pos, magnet_link.length() - pos));
+
+    std::cout << "Info Hash: " << info_hash << '\n';
+    std::cout << "Tracker URL: " << tracker_url << '\n';
+
+    std::string bytes_info_hash = hex_to_bytes(info_hash);
+    std::string peers = get_peers(tracker_url, bytes_info_hash);
+    return handshake(peers, bytes_info_hash, true);
 }
 
 int main(int argc, char* argv[])
@@ -647,23 +679,19 @@ int main(int argc, char* argv[])
     }
     else if (command == "magnet_handshake")
     {
-        if (argc < 3)
-        {
-            std::cerr << "Usage: " << argv[0] << " magnet_handshake <magnet-link>" << std::endl;
-            return 1;
-        }
-        std::string magnet_link = argv[2];
-        auto pos = magnet_link.find("xt=urn:btih:") + strlen("xt=urn:btih:");
-        std::string info_hash = magnet_link.substr(pos, 40);
-        pos = magnet_link.find("tr=") + strlen("tr=");
-        std::string tracker_url = url_decode(magnet_link.substr(pos, magnet_link.length() - pos));
-
-        std::cout << "Info Hash: " << info_hash << '\n';
-        std::cout << "Tracker URL: " << tracker_url << '\n';
+        magnet_handshake(argc, argv);
+    }
+    else if (command == "magnet_info")
+    {
+        PeerInfo peer = magnet_handshake(argc, argv);
         
-        std::string bytes_info_hash = hex_to_bytes(info_hash);
-        std::string peers = get_peers(tracker_url, bytes_info_hash);
-        handshake(peers, bytes_info_hash, true);
+        std::string payload = "d8:msg_typei0e5:piecei0ee";
+        uint32_t len = payload.length()+2;
+        len = htonl(len);
+        write(peer.sock_fd, &len, 4);
+        write(peer.sock_fd, (char[])20, 1);
+        write(peer.sock_fd, &peer.ut_metadata, 1);
+        write(peer.sock_fd, payload.c_str(), payload.length());
     }
 
     else

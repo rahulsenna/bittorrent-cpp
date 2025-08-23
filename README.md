@@ -1,34 +1,96 @@
-[![progress-banner](https://backend.codecrafters.io/progress/bittorrent/6b2b0091-9ac7-4a0c-a98d-e676a93c1440)](https://app.codecrafters.io/users/codecrafters-bot?r=2qF)
+# BitTorrent-CPP
 
-This is a starting point for C++ solutions to the
-["Build Your Own BitTorrent" Challenge](https://app.codecrafters.io/courses/bittorrent/overview).
+A simple **BitTorrent CLI client** written in C++.
+It supports downloading from both **`.torrent` files** and **magnet links**, with piece-level control for magnet downloads.
 
-In this challenge, you’ll build a BitTorrent client that's capable of parsing a
-.torrent file and downloading a file from a peer. Along the way, we’ll learn
-about how torrent files are structured, HTTP trackers, BitTorrent’s Peer
-Protocol, pipelining and more.
+---
 
-**Note**: If you're viewing this repo on GitHub, head over to
-[codecrafters.io](https://codecrafters.io) to try the challenge.
+## ✨ Features
 
-# Passing the first stage
+* Download files using a `.torrent` file.
+* Download specific pieces from a magnet link.
+* Command-line interface (no GUI).
+* Lightweight and minimal dependencies.
 
-The entry point for your BitTorrent implementation is in `src/main.cpp`. Study
-and uncomment the relevant code, and push your changes to pass the first stage:
+---
 
-```sh
-git commit -am "pass 1st stage" # any msg
-git push origin master
+## ⚡ Usage
+
+### Build
+
+```bash
+git clone https://github.com/rahulsenna/bittorrent-cpp.git
+cd bittorrent-cpp
+mkdir build && cd build
+cmake ..
+make
 ```
 
-Time to move on to the next stage!
+The binary will be available in the `build/` directory.
 
-# Stage 2 & beyond
+---
 
-Note: This section is for stages 2 and beyond.
+### Commands
 
-1. Ensure you have `cmake` installed locally
-1. Run `./your_program.sh` to run your program, which is implemented in
-   `src/main.cpp`.
-1. Commit your changes and run `git push origin master` to submit your solution
-   to CodeCrafters. Test output will be streamed to your terminal.
+#### 1. Download with `.torrent` file
+
+```bash
+./bittorrent-cpp download -o out_file sample.torrent
+```
+
+* `-o out_file` → output file path
+* `sample.torrent` → path to the torrent file
+
+---
+
+#### 2. Download specific piece from a magnet link
+
+```bash
+./bittorrent-cpp magnet_download_piece -o out_file "<magnet-link>" <piece_index>
+```
+
+* `-o out_file` → output file path
+* `<magnet-link>` → the magnet URI
+* `<piece_index>` → index of the piece to download
+
+---
+
+## 📂 Example
+
+```bash
+./bittorrent-cpp download -o ubuntu.iso ubuntu.torrent
+```
+
+```bash
+./bittorrent-cpp magnet_download_piece -o chunk.bin "magnet:?xt=urn:btih:..." 5
+```
+
+---
+
+## 🚧 Status
+
+This project is under active development.
+Currently supports:
+
+* Parsing `.torrent` files
+* Parsing magnet URIs
+* Downloading via BitTorrent protocol
+
+Planned improvements:
+
+* Multi-piece downloads for magnet links
+* Peer management & choking/unchoking
+* Upload/seeding support
+
+---
+
+## 🤝 Contributing
+
+Contributions, issues, and feature requests are welcome!
+Feel free to fork the repo and submit a PR.
+
+---
+
+## 📜 License
+
+This project is licensed under the MIT License – see the [LICENSE](LICENSE) file for details.

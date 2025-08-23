@@ -36,7 +36,8 @@
             "command": "make",
             "args": [ 
                 // "test_repl_with_redis"
-                "test_me"
+                // "test_me"
+                "test_all"
             ],
             "options": {
                 "cwd": "/Users/agentofchaos/dev/testers-codecrafters-io/bittorrent-tester"

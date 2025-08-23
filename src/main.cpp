@@ -682,7 +682,11 @@ int main(int argc, char* argv[])
             for (auto sock_fd : sockets)
             {
                 if (piece_index > piece_count)
+                {
+                    for (auto sock_fd: sockets)
+        	            close(sock_fd);
                     break;
+                }
 
                 size_t piece_size = (piece_index < piece_count) ? standard_piece_size : (total_size > used_len ? total_size - used_len : 0);
                 uint8_t *piece_buffer = file_buffer + (piece_index * standard_piece_size);

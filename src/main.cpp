@@ -17,6 +17,7 @@
 #include "lib/nlohmann/json.hpp"
 #include "lib/sha1.hpp"
 #include <curl/curl.h>
+#include <poll.h>
 
 enum MessageID
 {
@@ -417,8 +418,43 @@ std::vector<int> get_peers_connections(std::string &buffer)
 constexpr uint32_t CHUNK_SIZE = 16 * 1024;
 constexpr size_t RESPONSE_BUFFER_SIZE = 1024;
 
-void download_piece(int sock_fd, uint8_t *piece_buffer, size_t piece_size, int piece_index, bool magnet = false)
+size_t safe_read(int sock_fd, void *buf, size_t count, int timeout_ms = 500)
 {
+    struct pollfd pfd;
+    pfd.fd = sock_fd;
+    pfd.events = POLLIN;
+    int ret = poll(&pfd, 1, timeout_ms);
+
+    if (ret == 0)
+    {
+        fprintf(stderr, "Timeout waiting for data\n");
+        return false;
+    }
+    else if (ret < 0)
+    {
+        fprintf(stderr, "poll error");
+        return false;
+    }
+
+    size_t n = read(sock_fd, buf, count);
+    if (n == 0)
+    {
+        fprintf(stderr, "Peer disconnected\n");
+        return false; // EOF
+    }
+    else if (n < 0)
+    {
+        fprintf(stderr, "read error");
+        return false;
+    }
+
+    return n;
+}
+
+bool download_piece(int sock_fd, uint8_t *piece_buffer, size_t piece_size, int piece_index, bool magnet = false)
+{
+    
+
     uint8_t response[RESPONSE_BUFFER_SIZE];
 
     // Phase 1: Handle bitfield messages
@@ -428,9 +464,11 @@ void download_piece(int sock_fd, uint8_t *piece_buffer, size_t piece_size, int p
         write(sock_fd, (char[]){0, 0, 0, 1, Interested_MSG}, 5);
     } else
     {
-        read(sock_fd, &message_len_network, 4);
+        if (not safe_read(sock_fd, &message_len_network, 4))
+        	return false;
         message_len = ntohl(message_len_network);
-        read(sock_fd, response, message_len);
+        if (not safe_read(sock_fd, response, message_len))
+        	return false;
 
         if (response[0] == Bitfield_MSG)
             write(sock_fd, (char[]){0, 0, 0, 1, Interested_MSG}, 5);     
@@ -439,9 +477,12 @@ void download_piece(int sock_fd, uint8_t *piece_buffer, size_t piece_size, int p
 
     // Phase 2: Handle unchoke and send requests
     uint32_t chunk_count = (piece_size + CHUNK_SIZE - 1) / CHUNK_SIZE;
-    read(sock_fd, &message_len_network, 4);
+    if (not safe_read(sock_fd, &message_len_network, 4))
+        return false;
     message_len = ntohl(message_len_network);
-    read(sock_fd, response, message_len);
+
+    if (not safe_read(sock_fd, response, message_len))
+        return false;
     if (response[0] == Unchoke_MSG)
     {
         uint32_t piece_index_network = htonl(piece_index);
@@ -463,22 +504,32 @@ void download_piece(int sock_fd, uint8_t *piece_buffer, size_t piece_size, int p
     // Phase 3: Download chunks
     for (int chunk_idx = 0; chunk_idx < chunk_count; ++chunk_idx)
     {
-        read(sock_fd, &message_len_network, 4);
+        if (not safe_read(sock_fd, &message_len_network, 4))
+            return false;
         message_len = ntohl(message_len_network);
         uint8_t rec_id;
         uint32_t rec_piecie_idx;
         uint32_t byte_offset_network;
-        read(sock_fd, &rec_id, 1);
-        read(sock_fd, &rec_piecie_idx, 4);
-        read(sock_fd, &byte_offset_network, 4);
+        if (not safe_read(sock_fd, &rec_id, 1))
+            return false;
+        if (not safe_read(sock_fd, &rec_piecie_idx, 4))
+            return false;
+        if (not safe_read(sock_fd, &byte_offset_network, 4))
+            return false;
         uint32_t byte_offset = ntohl(byte_offset_network);
 
         size_t block_len = message_len - 9;
         size_t block_bytes_read = 0;
         while (block_bytes_read < block_len)
-            block_bytes_read += read(sock_fd, piece_buffer + byte_offset + block_bytes_read, block_len - block_bytes_read);
-    }
+        {
+            size_t s = safe_read(sock_fd, piece_buffer + byte_offset + block_bytes_read, block_len - block_bytes_read);
+            if (s == 0)
+                return false;
+            block_bytes_read += s;
+        }
+        }
     close(sock_fd);    
+    return true;
 }
 
 PeerInfo magnet_handshake(std::string &magnet_link)

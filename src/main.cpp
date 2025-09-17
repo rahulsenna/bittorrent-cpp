@@ -7,6 +7,7 @@
 #include <format>
 #include <sstream>
 #include <thread>
+#include <future>
 
 #include <sys/socket.h>
 #include <netinet/in.h>
@@ -18,6 +19,7 @@
 #include "lib/sha1.hpp"
 #include <curl/curl.h>
 #include <poll.h>
+#include <unordered_set>
 
 enum MessageID
 {
@@ -418,43 +420,38 @@ std::vector<int> get_peers_connections(std::string &buffer)
 constexpr uint32_t CHUNK_SIZE = 16 * 1024;
 constexpr size_t RESPONSE_BUFFER_SIZE = 1024;
 
-size_t safe_read(int sock_fd, void *buf, size_t count, int timeout_ms = 500)
+size_t read_exactly(int sock_fd, void *buf, size_t bytes_to_read, int timeout_ms = 1000)
 {
-    struct pollfd pfd;
-    pfd.fd = sock_fd;
-    pfd.events = POLLIN;
-    int ret = poll(&pfd, 1, timeout_ms);
+    size_t bytes_read = 0;
+    while(bytes_read < bytes_to_read)
+    {
+        struct pollfd pfd;
+        pfd.fd = sock_fd;
+        pfd.events = POLLIN;
+        int ret = poll(&pfd, 1, timeout_ms);
 
-    if (ret == 0)
-    {
-        fprintf(stderr, "Timeout waiting for data\n");
-        return false;
-    }
-    else if (ret < 0)
-    {
-        fprintf(stderr, "poll error");
-        return false;
-    }
+        if (ret <= 0)
+        {
+            fprintf(stderr, "DISCONNECT: sock_fd: %d, ret_val: %d\n", sock_fd, ret);
+            close(sock_fd);
+            return 0;
+        }
 
-    size_t n = read(sock_fd, buf, count);
-    if (n == 0)
-    {
-        fprintf(stderr, "Peer disconnected\n");
-        return false; // EOF
+        size_t remaining_bytes = bytes_to_read - bytes_read;
+        size_t n = read(sock_fd, (uint8_t*)buf+bytes_read, remaining_bytes);
+        if (n <= 0)
+        {
+            fprintf(stderr, "DISCONNECT: sock_fd: %d, bytes_read: %lu\n", sock_fd, n);
+            close(sock_fd);
+            return 0;
+        }
+        bytes_read += n;
     }
-    else if (n < 0)
-    {
-        fprintf(stderr, "read error");
-        return false;
-    }
-
-    return n;
+    return bytes_read;
 }
 
-bool download_piece(int sock_fd, uint8_t *piece_buffer, size_t piece_size, int piece_index, bool magnet = false)
+int download_piece(int sock_fd, uint8_t *piece_buffer, size_t piece_size, int piece_index, bool magnet = false)
 {
-    
-
     uint8_t response[RESPONSE_BUFFER_SIZE];
 
     // Phase 1: Handle bitfield messages
@@ -464,11 +461,11 @@ bool download_piece(int sock_fd, uint8_t *piece_buffer, size_t piece_size, int p
         write(sock_fd, (char[]){0, 0, 0, 1, Interested_MSG}, 5);
     } else
     {
-        if (not safe_read(sock_fd, &message_len_network, 4))
-        	return false;
+        if (not read_exactly(sock_fd, &message_len_network, 4))
+        	return -1;
         message_len = ntohl(message_len_network);
-        if (not safe_read(sock_fd, response, message_len))
-        	return false;
+        if (not read_exactly(sock_fd, response, message_len))
+        	return -1;
 
         if (response[0] == Bitfield_MSG)
             write(sock_fd, (char[]){0, 0, 0, 1, Interested_MSG}, 5);     
@@ -477,12 +474,12 @@ bool download_piece(int sock_fd, uint8_t *piece_buffer, size_t piece_size, int p
 
     // Phase 2: Handle unchoke and send requests
     uint32_t chunk_count = (piece_size + CHUNK_SIZE - 1) / CHUNK_SIZE;
-    if (not safe_read(sock_fd, &message_len_network, 4))
-        return false;
+    if (not read_exactly(sock_fd, &message_len_network, 4))
+        return -1;
     message_len = ntohl(message_len_network);
 
-    if (not safe_read(sock_fd, response, message_len))
-        return false;
+    if (not read_exactly(sock_fd, response, message_len))
+        return -1;
     if (response[0] == Unchoke_MSG)
     {
         uint32_t piece_index_network = htonl(piece_index);
@@ -504,34 +501,27 @@ bool download_piece(int sock_fd, uint8_t *piece_buffer, size_t piece_size, int p
     // Phase 3: Download chunks
     for (int chunk_idx = 0; chunk_idx < chunk_count; ++chunk_idx)
     {
-        if (not safe_read(sock_fd, &message_len_network, 4))
-            return false;
+        if (not read_exactly(sock_fd, &message_len_network, 4))
+            return -1;
         message_len = ntohl(message_len_network);
         uint8_t rec_id;
         uint32_t rec_piecie_idx;
         uint32_t byte_offset_network;
-        if (not safe_read(sock_fd, &rec_id, 1))
-            return false;
-        if (not safe_read(sock_fd, &rec_piecie_idx, 4))
-            return false;
-        if (not safe_read(sock_fd, &byte_offset_network, 4))
-            return false;
+        if (not read_exactly(sock_fd, &rec_id, 1))
+            return -1;
+        if (not read_exactly(sock_fd, &rec_piecie_idx, 4))
+            return -1;
+        if (not read_exactly(sock_fd, &byte_offset_network, 4))
+            return -1;
         uint32_t byte_offset = ntohl(byte_offset_network);
 
         size_t block_len = message_len - 9;
-        size_t block_bytes_read = 0;
-        while (block_bytes_read < block_len)
-        {
-            size_t s = safe_read(sock_fd, piece_buffer + byte_offset + block_bytes_read, block_len - block_bytes_read);
-            if (s == 0)
-                return false;
-            block_bytes_read += s;
-        }
+        if (not read_exactly(sock_fd, piece_buffer + byte_offset, block_len))
+            return -1;
         }
     close(sock_fd);    
-    return true;
+    return piece_index;
 }
-
 PeerInfo magnet_handshake(std::string &magnet_link)
 {
     auto pos = magnet_link.find("xt=urn:btih:") + strlen("xt=urn:btih:");
@@ -690,19 +680,22 @@ int main(int argc, char* argv[])
 
         uint8_t *piece_buffer = (uint8_t *)malloc(piece_size);
 
-        std::vector<int> sockets = get_peers_connections(buffer);
-        download_piece(sockets.front(), piece_buffer, piece_size, piece_index);
-
+        while(true)
+        {
+            std::vector<int> sockets = get_peers_connections(buffer);
+            for (auto socket : sockets)
+            {
+                if (download_piece(socket, piece_buffer, piece_size, piece_index) != -1)
+                    goto Done;
+            }
+        }
+Done:
         std::ofstream file = std::ofstream(out_file, std::ios::binary);
         if (file)
         {
             file.write((const char *)piece_buffer, piece_size);
             file.close();
         }
-
-        for (auto sock_fd: sockets)
-        	close(sock_fd);
-        
     }
 
     else if (command == "download")
@@ -724,27 +717,34 @@ int main(int argc, char* argv[])
         size_t used_len = piece_count * standard_piece_size;
 
         uint8_t *file_buffer = (uint8_t *)malloc(total_size);
-        
-        for (int piece_index = 0; piece_index <= piece_count;)
+        std::cout << "piece_count: " << piece_count << '\n';
+
+        std::unordered_set<int> pieces;
+        for (int i = 0; i <= piece_count; ++i)
+            pieces.insert(i);
+
+        while (not pieces.empty())
         {
             std::vector<int> sockets = get_peers_connections(buffer);
-            std::vector<std::thread> threads;
-            threads.reserve(sockets.size());
-            for (auto sock_fd : sockets)
+            std::vector<std::future<int>> futures;
+            int tasks = std::min(sockets.size(), pieces.size());
+            auto it = pieces.begin();
+            for (int i = 0; i < tasks; ++i, ++it)
             {
-                if (piece_index > piece_count)
-                {
-                    for (auto sock_fd: sockets)
-        	            close(sock_fd);
-                    break;
-                }
-
+                int sock_fd = sockets[i];
+                int piece_index = *it;
                 size_t piece_size = (piece_index < piece_count) ? standard_piece_size : (total_size > used_len ? total_size - used_len : 0);
                 uint8_t *piece_buffer = file_buffer + (piece_index * standard_piece_size);
-                threads.emplace_back(download_piece, sock_fd, piece_buffer, piece_size, piece_index++, false);
+                futures.push_back(std::async(std::launch::async, download_piece, sock_fd, piece_buffer, piece_size, piece_index, false));
             }
-            for (auto &thread : threads)
-                thread.join();
+            for (auto &f : futures)
+            {
+                auto res = f.get();
+                if (res == -1)
+                    continue;
+                std::cout << "Downloaded piece_index: " << res << '\n';
+                pieces.erase(res);
+            }
         }
 
         std::ofstream file = std::ofstream(out_file, std::ios::binary);

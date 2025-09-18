@@ -522,7 +522,8 @@ int download_piece(int sock_fd, uint8_t *piece_buffer, size_t piece_size, int pi
     close(sock_fd);    
     return piece_index;
 }
-PeerInfo magnet_handshake(std::string &magnet_link)
+
+std::pair<std::string,std::string> magnet_ip_and_hash(std::string &magnet_link)
 {
     auto pos = magnet_link.find("xt=urn:btih:") + strlen("xt=urn:btih:");
     std::string info_hash = magnet_link.substr(pos, 40);
@@ -534,6 +535,12 @@ PeerInfo magnet_handshake(std::string &magnet_link)
 
     std::string bytes_info_hash = hex_to_bytes(info_hash);
     std::string peers = get_peers(tracker_url, bytes_info_hash);
+    return {peers, bytes_info_hash};
+}
+
+PeerInfo magnet_handshake(std::string &magnet_link)
+{
+    auto [peers, bytes_info_hash] = magnet_ip_and_hash(magnet_link);
     return handshake(peers, bytes_info_hash, true);
 }
 
@@ -548,6 +555,27 @@ PeerInfo magnet_handshake(int argc, char* argv[])
     return magnet_handshake(magnet_link);
 }
 
+std::vector<PeerInfo> magnet_get_peers(std::string &magnet_link)
+{
+    auto [peers_str, bytes_info_hash] = magnet_ip_and_hash(magnet_link);
+
+    std::vector<std::string> peers;
+    for (auto peer : std::views::split(peers_str, '\n'))
+        peers.push_back({peer.begin(), peer.end()});
+
+    std::vector<PeerInfo> sockets;
+    sockets.reserve(peers.size());
+    std::vector<std::thread> threads;
+    threads.reserve(peers.size());
+    for (auto &peer : peers)
+    {
+        threads.emplace_back([&]()
+                             { sockets.push_back(handshake(peer, bytes_info_hash, true)); });
+    }
+    for (auto &thread : threads)
+        thread.join();
+    return sockets;
+}
 json get_magnet_metadata(PeerInfo &peer)
 {
     std::string payload = "d8:msg_typei0e5:piecei0ee";
@@ -686,15 +714,16 @@ int main(int argc, char* argv[])
             for (auto socket : sockets)
             {
                 if (download_piece(socket, piece_buffer, piece_size, piece_index) != -1)
-                    goto Done;
+                {
+                    std::ofstream file = std::ofstream(out_file, std::ios::binary);
+                    if (file)
+                    {
+                        file.write((const char *)piece_buffer, piece_size);
+                        file.close();
+                    }
+                    return 0;
+                }
             }
-        }
-Done:
-        std::ofstream file = std::ofstream(out_file, std::ios::binary);
-        if (file)
-        {
-            file.write((const char *)piece_buffer, piece_size);
-            file.close();
         }
     }
 
@@ -803,25 +832,37 @@ Done:
         std::string out_file = argv[3];
         std::string magnet_link = argv[4];
         int piece_index = atoi(argv[5]);
-
-        PeerInfo peer = magnet_handshake(magnet_link);
-        auto metadata = get_magnet_metadata(peer);
-
-        int total_size = metadata["length"];
-        int std_piece_len = metadata["piece length"];
-
-        size_t piece_count = total_size / std_piece_len;
-        size_t used_len = piece_count * std_piece_len;
-        size_t piece_size = (piece_index < piece_count) ? std_piece_len : (total_size > used_len ? total_size - used_len : 0);
-        uint8_t *piece_buffer = (uint8_t *)malloc(piece_size);
-
-        download_piece(peer.sock_fd, piece_buffer, piece_size, piece_index, true);
-
-        std::ofstream file = std::ofstream(out_file, std::ios::binary);
-        if (file)
+        uint8_t *piece_buffer = 0;
+        size_t piece_size = 0;
+        while (true)
         {
-            file.write((const char *)piece_buffer, piece_size);
-            file.close();
+            std::vector<PeerInfo> peers = magnet_get_peers(magnet_link);
+            if (piece_buffer == 0)
+            {
+                auto metadata = get_magnet_metadata(peers[0]);
+
+                int total_size = metadata["length"];
+                int std_piece_len = metadata["piece length"];
+
+                size_t piece_count = total_size / std_piece_len;
+                size_t used_len = piece_count * std_piece_len;
+                piece_size = (piece_index < piece_count) ? std_piece_len : (total_size > used_len ? total_size - used_len : 0);
+                piece_buffer = (uint8_t *)malloc(piece_size);
+            }
+
+            for (auto [socket, _, __] : peers)
+            {
+                if (download_piece(socket, piece_buffer, piece_size, piece_index, true) != -1)
+                {
+                    std::ofstream file = std::ofstream(out_file, std::ios::binary);
+                    if (file)
+                    {
+                        file.write((const char *)piece_buffer, piece_size);
+                        file.close();
+                        return 0;
+                    }
+                }
+            }
         }
     }
     else if (command == "magnet_download")
@@ -834,24 +875,49 @@ Done:
         std::string out_file = argv[3];
         std::string magnet_link = argv[4];
 
-        PeerInfo peer = magnet_handshake(magnet_link);
-        auto metadata = get_magnet_metadata(peer);
-
-        int total_size = metadata["length"];
-        int std_piece_len = metadata["piece length"];
-
-        size_t piece_count = total_size / std_piece_len;
-        size_t used_len = piece_count * std_piece_len;
-        uint8_t *file_buffer = (uint8_t *)malloc(total_size);
-
-        for (int piece_index = 0; piece_index <= piece_count; ++piece_index)
+        int total_size, standard_piece_size;
+        size_t piece_count, used_len;
+        uint8_t *file_buffer = 0;
+        std::unordered_set<int> pieces;
+        do
         {
-            size_t piece_size = (piece_index < piece_count) ? std_piece_len : (total_size > used_len ? total_size - used_len : 0);
-            uint8_t *piece_buffer = file_buffer + (piece_index * std_piece_len);
-            download_piece(peer.sock_fd, piece_buffer, piece_size, piece_index, true);
-            peer = magnet_handshake(magnet_link);
-        }
-        
+            std::vector<PeerInfo> peers = magnet_get_peers(magnet_link);
+            if (file_buffer == 0)
+            {
+                auto metadata = get_magnet_metadata(peers[0]);
+
+                total_size = metadata["length"];
+                standard_piece_size = metadata["piece length"];
+
+                piece_count = total_size / standard_piece_size;
+                used_len = piece_count * standard_piece_size;
+                file_buffer = (uint8_t *)malloc(total_size);
+
+                for (int i = 0; i <= piece_count; ++i)
+                    pieces.insert(i);
+            }
+
+            std::vector<std::future<int>> futures;
+            int tasks = std::min(peers.size(), pieces.size());
+            auto it = pieces.begin();
+            for (int i = 0; i < tasks; ++i, ++it)
+            {
+                int sock_fd = peers[i].sock_fd;
+                int piece_index = *it;
+                size_t piece_size = (piece_index < piece_count) ? standard_piece_size : (total_size > used_len ? total_size - used_len : 0);
+                uint8_t *piece_buffer = file_buffer + (piece_index * standard_piece_size);
+                futures.push_back(std::async(std::launch::async, download_piece, sock_fd, piece_buffer, piece_size, piece_index, true));
+            }
+            for (auto &f : futures)
+            {
+                auto res = f.get();
+                if (res == -1)
+                    continue;
+                std::cout << "Magnet Downloaded piece_index: " << res << '\n';
+                pieces.erase(res);
+            }
+        } while (not pieces.empty());
+
         std::ofstream file = std::ofstream(out_file, std::ios::binary);
         if (file)
         {
